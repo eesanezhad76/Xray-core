@@ -29,7 +29,7 @@ func TestPacketTapCopiesPacket(t *testing.T) {
 	}
 }
 
-func TestPacketTapDropsWhenFullWithoutBlocking(t *testing.T) {
+func TestPacketTapCountsFullQueue(t *testing.T) {
 	if !EnablePacketTap(1) {
 		t.Fatal("EnablePacketTap rejected valid capacity")
 	}
@@ -48,5 +48,25 @@ func TestPacketTapDropsWhenFullWithoutBlocking(t *testing.T) {
 func TestPacketTapRejectsInvalidCapacity(t *testing.T) {
 	if EnablePacketTap(0) || EnablePacketTap(maxPacketTapCapacity+1) {
 		t.Fatal("accepted invalid queue capacity")
+	}
+}
+
+func TestPacketTapCopiesPacketPartsAndDrainsAfterDisable(t *testing.T) {
+	if !EnablePacketTap(2) {
+		t.Fatal("EnablePacketTap rejected valid capacity")
+	}
+	parts := [][]byte{{1, 2}, {3, 4, 5}}
+	observePacketParts(parts, 5)
+	DisablePacketTap()
+
+	got := ReadPacketTap()
+	if !bytes.Equal(got, []byte{1, 2, 3, 4, 5}) {
+		t.Fatalf("unexpected packet assembled from readv parts: %v", got)
+	}
+	if got := ReadPacketTap(); got != nil {
+		t.Fatalf("expected empty queue after drain, got %v", got)
+	}
+	if PacketTapDropped() != 0 {
+		t.Fatalf("unexpected drops: %d", PacketTapDropped())
 	}
 }
