@@ -63,7 +63,11 @@ func newFdTun(fd, vnet int) *fdTun {
 func (t *fdTun) ReadPacket(b []byte) ([]byte, error) {
 	n, err := t.file.Read(b)
 	// what the virtio_net_hdr says is of no use here: no checksum is looked at, and a segment may have any size
-	return b[min(t.vnet, n):n], err
+	packet := b[min(t.vnet, n):n]
+	if err == nil {
+		observePacket(packet)
+	}
+	return packet, err
 }
 
 // ReadParts implements segmenter
