@@ -81,7 +81,11 @@ func (t *fdTun) ReadParts(parts [][]byte) (int, error) {
 	if err := t.raw.Read(t.readv); err != nil {
 		return 0, err
 	}
-	return max(t.read-t.vnet, 0), t.readErr
+	n := max(t.read-t.vnet, 0)
+	if t.readErr == nil && n > 0 {
+		observePacketParts(parts, n)
+	}
+	return n, t.readErr
 }
 
 func (t *fdTun) WritePacket(header, payload []byte) error {
