@@ -64,7 +64,7 @@ func (t *fdTun) ReadPacket(b []byte) ([]byte, error) {
 	n, err := t.file.Read(b)
 	// what the virtio_net_hdr says is of no use here: no checksum is looked at, and a segment may have any size
 	packet := b[min(t.vnet, n):n]
-	if err == nil {
+	if len(packet) > 0 {
 		observePacket(packet)
 	}
 	return packet, err
