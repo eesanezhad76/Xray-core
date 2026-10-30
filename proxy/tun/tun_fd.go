@@ -89,6 +89,9 @@ func (t *fdTun) ReadParts(parts [][]byte) (int, error) {
 }
 
 func (t *fdTun) WritePacket(header, payload []byte) error {
+	// Capture the reverse direction too: packets written by Xray back to the
+	// Android TUN are inbound packets as seen by applications.
+	observePacketParts([][]byte{header, payload}, len(header)+len(payload))
 	// a virtio_net_hdr of zeros leaves nothing to the system
 	var vnet [packetRoom]byte
 	return t.writev(vnet[:t.vnet], header, payload)
