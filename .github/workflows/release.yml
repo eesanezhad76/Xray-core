@@ -16,65 +16,38 @@ jobs:
     runs-on: ubuntu-latest
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.event.pull_request.base.repo.full_name
     steps:
-      - name: Restore Geodat Cache
-        uses: actions/cache/restore@v6
-        with:
-          path: resources
-          key: xray-geodat-
-
-      - name: Restore Wintun Cache
-        uses: actions/cache/restore@v6
-        with:
-          path: resources
-          key: xray-wintun-
-
-      - name: Check Assets Existence
-        id: check-assets
+      - name: Download and verify packaging assets
+        shell: bash
+        env:
+          ASSETVER: 0.14.1
+          ASSETHASH: 07c256185d6ee3652e09fa55c0b673e2624b565e02c4b9091c79ca7d2f24ef51
         run: |
-          [ -d 'resources' ] || mkdir resources
-          LIST=('geoip.dat' 'geosite.dat')
-          for FILE_NAME in "${LIST[@]}"
-          do
-            echo -e "Checking ${FILE_NAME}..."
-            if [ -s "./resources/${FILE_NAME}" ]; then
-              echo -e "${FILE_NAME} exists."
-            else
-              echo -e "${FILE_NAME} does not exist."
-              echo "missing=true" >> $GITHUB_OUTPUT
-              break
-            fi
+          set -euo pipefail
+          mkdir -p resources
+          download_dat() {
+            local name="$1" path="$2" expected actual
+            expected="$(curl -fsSL "https://raw.githubusercontent.com/XTLS/Xray-rules-dat/release/${path}.dat.sha256sum" | awk '{print $1}')"
+            [[ "$expected" =~ ^[0-9a-fA-F]{64}$ ]] || { echo "Invalid checksum for ${name}.dat"; exit 1; }
+            curl -fsSL "https://raw.githubusercontent.com/XTLS/Xray-rules-dat/release/${path}.dat" -o "resources/${name}.dat"
+            actual="$(sha256sum "resources/${name}.dat" | awk '{print $1}')"
+            [[ "$actual" == "$expected" ]] || { echo "SHA-256 mismatch for ${name}.dat"; exit 1; }
+            echo "Verified ${name}.dat (${actual})"
+          }
+          download_dat geoip geoip/geoip-lite
+          download_dat geosite geosite/geosite
+          curl -fsSL "https://www.wintun.net/builds/wintun-${ASSETVER}.zip" -o wintun.zip
+          echo "${ASSETHASH}  wintun.zip" | sha256sum -c -
+          unzip -oq wintun.zip -d resources/
+          for arch in amd64 x86 arm64; do
+            test -s "resources/wintun/bin/${arch}/wintun.dll" || { echo "Missing wintun.dll for ${arch}"; exit 1; }
           done
-          LIST=('amd64' 'x86' 'arm64')
-          for ARCHITECTURE in "${LIST[@]}"
-          do
-            echo -e "Checking wintun.dll for ${ARCHITECTURE}..."
-            if [ -s "./resources/wintun/bin/${ARCHITECTURE}/wintun.dll" ]; then
-              echo -e "wintun.dll for ${ARCHITECTURE} exists."
-            else
-              echo -e "wintun.dll for ${ARCHITECTURE} is missing."
-              echo "missing=true" >> $GITHUB_OUTPUT
-              break
-            fi
-          done
-
-      - name: Trigger Asset Update Workflow if Assets Missing
-        if: steps.check-assets.outputs.missing == 'true'
-        uses: actions/github-script@v9
+          test -s resources/wintun/LICENSE.txt
+      - name: Upload packaging assets
+        uses: actions/upload-artifact@v4
         with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          script: |
-            const { owner, repo } = context.repo;
-            await github.rest.actions.createWorkflowDispatch({
-              owner,
-              repo,
-              workflow_id: 'scheduled-assets-update.yml',
-              ref: context.ref
-            });
-            console.log('Triggered scheduled-assets-update.yml due to missing assets on branch:', context.ref);
-
-      - name: Sleep for 90 seconds if Assets Missing
-        if: steps.check-assets.outputs.missing == 'true'
-        run: sleep 90
+          name: xray-packaging-assets
+          path: resources/
+          if-no-files-found: error
 
   build:
     needs: check-assets
@@ -175,6 +148,12 @@ jobs:
       - name: Checkout codebase
         uses: actions/checkout@v7
 
+      - name: Download packaging assets
+        uses: actions/download-artifact@v4
+        with:
+          name: xray-packaging-assets
+          path: resources
+
       - name: Set up NDK
         if: matrix.goos == 'android'
         run: |
@@ -226,19 +205,6 @@ jobs:
               go build -o build_assets/xray -trimpath -buildvcs=false -gcflags="all=-l=4" -ldflags="-X github.com/xtls/xray-core/core.build=${COMMID} -s -w -buildid=" -v ./main
             fi
           fi
-
-      - name: Restore Geodat Cache
-        uses: actions/cache/restore@v6
-        with:
-          path: resources
-          key: xray-geodat-
-
-      - name: Restore Wintun Cache
-        if: matrix.goos == 'windows'
-        uses: actions/cache/restore@v6
-        with:
-          path: resources
-          key: xray-wintun-
 
       - name: Add additional assets into package
         run: |
