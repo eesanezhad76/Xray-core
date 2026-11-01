@@ -45,6 +45,39 @@ func TestPacketTapCountsFullQueue(t *testing.T) {
 	}
 }
 
+func TestPacketTapPreservesQueuedCopiesAcrossDisableAndReenable(t *testing.T) {
+	if !EnablePacketTap(2) {
+		t.Fatal("EnablePacketTap rejected valid capacity")
+	}
+	observePacket([]byte{1, 2, 3})
+	DisablePacketTap()
+	if !EnablePacketTap(2) {
+		t.Fatal("EnablePacketTap could not reuse queue after disable")
+	}
+	if got := ReadPacketTap(); !bytes.Equal(got, []byte{1, 2, 3}) {
+		t.Fatalf("queued packet was lost across re-enable: %v", got)
+	}
+	DisablePacketTap()
+}
+
+func TestPacketTapRefusesResizeWhileQueuedCopiesRemain(t *testing.T) {
+	if !EnablePacketTap(2) {
+		t.Fatal("EnablePacketTap rejected valid capacity")
+	}
+	observePacket([]byte{4, 5})
+	DisablePacketTap()
+	if EnablePacketTap(3) {
+		t.Fatal("resizing unexpectedly discarded a queued packet")
+	}
+	if got := ReadPacketTap(); !bytes.Equal(got, []byte{4, 5}) {
+		t.Fatalf("queued packet was lost after rejected resize: %v", got)
+	}
+	if !EnablePacketTap(3) {
+		t.Fatal("resize should succeed after old queue is drained")
+	}
+	DisablePacketTap()
+}
+
 func TestPacketTapRejectsInvalidCapacity(t *testing.T) {
 	if EnablePacketTap(0) || EnablePacketTap(maxPacketTapCapacity+1) {
 		t.Fatal("accepted invalid queue capacity")
