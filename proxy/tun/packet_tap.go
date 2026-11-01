@@ -26,6 +26,7 @@ type packetTap struct {
 }
 
 var activePacketTap atomic.Pointer[packetTap]
+var packetTapConfigMu sync.Mutex
 
 // EnablePacketTap enables a bounded packet copy queue. Packet buffers are sized
 // to the actual packet length rather than reserving 65535 bytes for every slot.
@@ -33,6 +34,27 @@ func EnablePacketTap(capacity int) bool {
 	if capacity < minPacketTapCapacity || capacity > maxPacketTapCapacity {
 		return false
 	}
+	packetTapConfigMu.Lock()
+	defer packetTapConfigMu.Unlock()
+
+	if current := activePacketTap.Load(); current != nil {
+		current.mu.Lock()
+		if len(current.slots) == capacity {
+			// Reuse the existing queue across a core reload. Replacing it would
+			// make packets already copied into the old queue unreachable.
+			current.enabled.Store(true)
+			current.mu.Unlock()
+			return true
+		}
+		if current.queued != 0 {
+			// Never discard queued observations just to resize a diagnostic queue.
+			current.mu.Unlock()
+			return false
+		}
+		current.enabled.Store(false)
+		current.mu.Unlock()
+	}
+
 	tap := &packetTap{slots: make([]packetTapSlot, capacity)}
 	tap.enabled.Store(true)
 	activePacketTap.Store(tap)
@@ -41,6 +63,8 @@ func EnablePacketTap(capacity int) bool {
 
 // DisablePacketTap stops observing new packets but leaves queued packets readable.
 func DisablePacketTap() {
+	packetTapConfigMu.Lock()
+	defer packetTapConfigMu.Unlock()
 	if tap := activePacketTap.Load(); tap != nil {
 		tap.enabled.Store(false)
 	}
