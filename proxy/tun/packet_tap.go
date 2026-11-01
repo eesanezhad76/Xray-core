@@ -70,6 +70,59 @@ func DisablePacketTap() {
 	}
 }
 
+
+// ResetPacketTap clears queued observation copies and the drop counter.
+// It is intentionally allowed only while observation is disabled. Callers must
+// stop and join the old consumer before resetting, then enable a fresh session.
+func ResetPacketTap() bool {
+	packetTapConfigMu.Lock()
+	defer packetTapConfigMu.Unlock()
+
+	tap := activePacketTap.Load()
+	if tap == nil {
+		return true
+	}
+	tap.mu.Lock()
+	defer tap.mu.Unlock()
+	if tap.enabled.Load() {
+		return false
+	}
+	for i := range tap.slots {
+		tap.slots[i].data = nil
+	}
+	tap.head = 0
+	tap.tail = 0
+	tap.queued = 0
+	tap.dropped.Store(0)
+	return true
+}
+
+// PacketTapQueued returns the number of copied packets waiting for the consumer.
+func PacketTapQueued() int {
+	tap := activePacketTap.Load()
+	if tap == nil {
+		return 0
+	}
+	tap.mu.Lock()
+	defer tap.mu.Unlock()
+	return tap.queued
+}
+
+// PacketTapCapacity returns the configured queue capacity, or zero before first enable.
+func PacketTapCapacity() int {
+	tap := activePacketTap.Load()
+	if tap == nil {
+		return 0
+	}
+	return len(tap.slots)
+}
+
+// PacketTapEnabled reports whether new observation copies are currently accepted.
+func PacketTapEnabled() bool {
+	tap := activePacketTap.Load()
+	return tap != nil && tap.enabled.Load()
+}
+
 // ReadPacketTap returns the next owned raw IP packet, or nil when the queue is empty.
 func ReadPacketTap() []byte {
 	tap := activePacketTap.Load()
