@@ -103,3 +103,55 @@ func TestPacketTapCopiesPacketPartsAndDrainsAfterDisable(t *testing.T) {
 		t.Fatalf("unexpected drops: %d", PacketTapDropped())
 	}
 }
+
+
+func TestPacketTapResetRequiresDisabledQueue(t *testing.T) {
+	if !EnablePacketTap(3) {
+		t.Fatal("EnablePacketTap rejected valid capacity")
+	}
+	observePacket([]byte{1, 2, 3})
+	if ResetPacketTap() {
+		t.Fatal("reset unexpectedly succeeded while tap was enabled")
+	}
+	DisablePacketTap()
+	if !ResetPacketTap() {
+		t.Fatal("reset failed while tap was disabled")
+	}
+	if got := ReadPacketTap(); got != nil {
+		t.Fatalf("reset left a stale packet queued: %v", got)
+	}
+	if got := PacketTapDropped(); got != 0 {
+		t.Fatalf("reset did not clear drop counter: %d", got)
+	}
+	if got := PacketTapQueued(); got != 0 {
+		t.Fatalf("reset did not clear queue depth: %d", got)
+	}
+	if got := PacketTapCapacity(); got != 3 {
+		t.Fatalf("reset changed capacity: %d", got)
+	}
+	if PacketTapEnabled() {
+		t.Fatal("reset unexpectedly enabled packet tap")
+	}
+}
+
+func TestPacketTapResetStartsCleanSession(t *testing.T) {
+	if !EnablePacketTap(2) {
+		t.Fatal("EnablePacketTap rejected valid capacity")
+	}
+	observePacket([]byte{1})
+	DisablePacketTap()
+	if !ResetPacketTap() {
+		t.Fatal("ResetPacketTap failed")
+	}
+	if !EnablePacketTap(2) {
+		t.Fatal("EnablePacketTap could not start a clean session")
+	}
+	observePacket([]byte{9, 8})
+	if got := ReadPacketTap(); !bytes.Equal(got, []byte{9, 8}) {
+		t.Fatalf("new session returned stale or corrupt packet: %v", got)
+	}
+	if got := ReadPacketTap(); got != nil {
+		t.Fatalf("new session retained old packet: %v", got)
+	}
+	DisablePacketTap()
+}
