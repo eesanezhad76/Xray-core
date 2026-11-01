@@ -1,6 +1,7 @@
 name: Tests and Checkings
 
 on:
+  workflow_dispatch:
   push:
   pull_request:
     types: [opened, synchronize, reopened]
@@ -10,30 +11,28 @@ jobs:
     runs-on: ubuntu-latest
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.event.pull_request.base.repo.full_name
     steps:
-      - name: Restore Geodat Cache
-        uses: actions/cache/restore@v6
-        with:
-          path: resources
-          key: xray-geodat-
-      - name: Check Assets Existence
-        id: check-assets
+      - name: Download and verify geodata
+        shell: bash
         run: |
-          [ -d 'resources' ] || mkdir resources
-          LIST=('geoip.dat' 'geosite.dat')
-          for FILE_NAME in "${LIST[@]}"
-          do
-            echo -e "Checking ${FILE_NAME}..."
-            if [ -s "./resources/${FILE_NAME}" ]; then
-              echo -e "${FILE_NAME} exists."
-            else
-              echo -e "${FILE_NAME} does not exist."
-              echo "missing=true" >> $GITHUB_OUTPUT
-              break
-            fi
-          done
-      - name: Sleep for 90 seconds if Assets Missing
-        if: steps.check-assets.outputs.missing == 'true'
-        run: sleep 90
+          set -euo pipefail
+          mkdir -p resources
+          download_dat() {
+            local name="$1" path="$2" expected actual
+            expected="$(curl -fsSL "https://raw.githubusercontent.com/XTLS/Xray-rules-dat/release/${path}.dat.sha256sum" | awk '{print $1}')"
+            [[ "$expected" =~ ^[0-9a-fA-F]{64}$ ]] || { echo "Invalid checksum for ${name}.dat"; exit 1; }
+            curl -fsSL "https://raw.githubusercontent.com/XTLS/Xray-rules-dat/release/${path}.dat" -o "resources/${name}.dat"
+            actual="$(sha256sum "resources/${name}.dat" | awk '{print $1}')"
+            [[ "$actual" == "$expected" ]] || { echo "SHA-256 mismatch for ${name}.dat"; exit 1; }
+            echo "Verified ${name}.dat (${actual})"
+          }
+          download_dat geoip geoip/geoip-lite
+          download_dat geosite geosite/geosite
+      - name: Upload geodata artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: xray-geodata
+          path: resources/*.dat
+          if-no-files-found: error
 
   check-proto:
     runs-on: ubuntu-latest
@@ -82,16 +81,15 @@ jobs:
     steps:
       - name: Checkout codebase
         uses: actions/checkout@v7
+      - name: Download geodata artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: xray-geodata
+          path: resources
       - name: Set up Go
         uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
           check-latest: true
-      - name: Restore Geodat Cache
-        uses: actions/cache/restore@v6
-        with:
-          path: resources
-          key: xray-geodat-
-          enableCrossOsArchive: true
       - name: Test
         run: go test -timeout 1h -v ./...

@@ -63,7 +63,11 @@ func newFdTun(fd, vnet int) *fdTun {
 func (t *fdTun) ReadPacket(b []byte) ([]byte, error) {
 	n, err := t.file.Read(b)
 	// what the virtio_net_hdr says is of no use here: no checksum is looked at, and a segment may have any size
-	return b[min(t.vnet, n):n], err
+	packet := b[min(t.vnet, n):n]
+	if len(packet) > 0 {
+		observePacket(packet)
+	}
+	return packet, err
 }
 
 // ReadParts implements segmenter
@@ -77,10 +81,17 @@ func (t *fdTun) ReadParts(parts [][]byte) (int, error) {
 	if err := t.raw.Read(t.readv); err != nil {
 		return 0, err
 	}
-	return max(t.read-t.vnet, 0), t.readErr
+	n := max(t.read-t.vnet, 0)
+	if t.readErr == nil && n > 0 {
+		observePacketParts(parts, n)
+	}
+	return n, t.readErr
 }
 
 func (t *fdTun) WritePacket(header, payload []byte) error {
+	// Capture the reverse direction too: packets written by Xray back to the
+	// Android TUN are inbound packets as seen by applications.
+	observePacketParts([][]byte{header, payload}, len(header)+len(payload))
 	// a virtio_net_hdr of zeros leaves nothing to the system
 	var vnet [packetRoom]byte
 	return t.writev(vnet[:t.vnet], header, payload)
@@ -112,6 +123,13 @@ func (t *fdTun) WriteSegment(header []byte, payload [][]byte, mss int) error {
 	// where the checksum starts, and where it is put from there
 	binary.NativeEndian.PutUint16(b[6:], uint16(ip))
 	binary.NativeEndian.PutUint16(b[8:], 16)
+	// Observe the complete raw IP packet before adding the virtio-net header.
+	// Keep this diagnostic copy independent from the buffers passed to writev.
+	packetParts := make([][]byte, 0, 1+len(payload))
+	packetParts = append(packetParts, header)
+	packetParts = append(packetParts, payload...)
+	observePacketParts(packetParts, len(header)+size)
+
 	var parts [8][]byte
 	return t.writev(append(append(parts[:0], b[:t.vnet+copy(b[t.vnet:], header)]), payload...)...)
 }
