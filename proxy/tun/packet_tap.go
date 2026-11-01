@@ -91,9 +91,12 @@ func observePacketParts(parts [][]byte, size int) {
 		return
 	}
 
-	// Blocking lock prevents transient reader contention from silently dropping
-	// packets; the critical section only copies/enqueues the packet.
-	tap.mu.Lock()
+	// Packet observation must never stall the TUN forwarding path. If the
+	// reader briefly owns the queue lock, drop this diagnostic copy and count it.
+	if !tap.mu.TryLock() {
+		tap.dropped.Add(1)
+		return
+	}
 	defer tap.mu.Unlock()
 	if !tap.enabled.Load() {
 		return
