@@ -123,6 +123,13 @@ func (t *fdTun) WriteSegment(header []byte, payload [][]byte, mss int) error {
 	// where the checksum starts, and where it is put from there
 	binary.NativeEndian.PutUint16(b[6:], uint16(ip))
 	binary.NativeEndian.PutUint16(b[8:], 16)
+	// Observe the complete raw IP packet before adding the virtio-net header.
+	// Keep this diagnostic copy independent from the buffers passed to writev.
+	packetParts := make([][]byte, 0, 1+len(payload))
+	packetParts = append(packetParts, header)
+	packetParts = append(packetParts, payload...)
+	observePacketParts(packetParts, len(header)+size)
+
 	var parts [8][]byte
 	return t.writev(append(append(parts[:0], b[:t.vnet+copy(b[t.vnet:], header)]), payload...)...)
 }
